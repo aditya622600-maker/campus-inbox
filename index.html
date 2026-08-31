@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Campus Inbox prioritizes college email using transparent student-focused rules." />
+  <title>Campus Inbox</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#"><span class="brand-mark">C</span><span>Campus Inbox</span></a>
+      <nav aria-label="Main navigation">
+        <button class="nav-item active" data-filter="all"><span>⌂</span> Priority inbox <b id="allCount">0</b></button>
+        <button class="nav-item" data-filter="critical"><span>!</span> Critical <b id="criticalNavCount">0</b></button>
+        <button class="nav-item" data-filter="moderate"><span>◆</span> Worth a look <b id="moderateNavCount">0</b></button>
+        <button class="nav-item" data-filter="low"><span>–</span> Low priority <b id="lowNavCount">0</b></button>
+      </nav>
+      <div class="privacy-card">
+        <span class="shield">✓</span>
+        <div><strong>Private by design</strong><p>This demo runs only in your browser. No emails leave your device.</p></div>
+      </div>
+      <button class="profile"><span>AP</span><div><strong>Aditya Pratap Singh</strong><small>Student account</small></div><i>⋯</i></button>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">WEDNESDAY, 26 AUGUST</p>
+          <h1>Your priority inbox</h1>
+          <p class="subtitle">The messages that deserve your attention, without the noise.</p>
+        </div>
+        <div class="header-actions">
+          <label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Search mail" /></label>
+          <button class="icon-button" id="settingsButton" aria-label="Open classification rules">⚙</button>
+          <button class="connect" id="connectButton"><span class="google-g">G</span> Connect Gmail</button>
+        </div>
+      </header>
+
+      <section class="summary" aria-label="Inbox summary">
+        <article class="summary-card urgent"><span class="summary-icon">!</span><div><strong id="criticalCount">0</strong><small>need attention</small></div><p id="urgentSummary">Nothing urgent</p></article>
+        <article class="summary-card opportunity"><span class="summary-icon">↗</span><div><strong id="moderateCount">0</strong><small>worth a look</small></div><p>Opportunities and useful updates</p></article>
+        <article class="summary-card quiet"><span class="summary-icon">✓</span><div><strong id="lowCount">0</strong><small>filtered out</small></div><p>Your inbox is quieter already</p></article>
+      </section>
+
+      <section class="inbox-toolbar">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-filter="all">All priority</button>
+          <button class="tab" data-filter="critical">Critical</button>
+          <button class="tab" data-filter="moderate">Worth a look</button>
+          <button class="tab" data-filter="low">Low priority</button>
+        </div>
+        <select id="sortSelect" aria-label="Sort messages"><option value="priority">Sort: Priority</option><option value="newest">Sort: Newest</option></select>
+      </section>
+
+      <section id="mailList" class="mail-list" aria-live="polite"></section>
+      <div id="emptyState" class="empty-state" hidden><span>⌕</span><h2>No messages found</h2><p>Try another search or priority filter.</p></div>
+      <footer class="site-footer"><span>Campus Inbox is an independent student project, not an official college service.</span><nav aria-label="Legal"><a href="privacy.html">Privacy Policy</a><a href="terms.html">Terms of Service</a></nav></footer>
+    </main>
+  </div>
+
+  <dialog id="rulesDialog">
+    <form method="dialog">
+      <button class="dialog-close" aria-label="Close">×</button>
+      <p class="eyebrow">CLASSIFICATION LOGIC</p>
+      <h2>Your priority rules</h2>
+      <p>Campus Inbox uses understandable rules—not a mysterious score.</p>
+      <div class="rule critical-rule"><b>Critical</b><span>Exams, assignment deadlines, fee deadlines, academic warnings, or attendance below 75%.</span></div>
+      <div class="rule moderate-rule"><b>Worth a look</b><span>Hackathons, internships, placements, scholarships, competitions, and relevant workshops.</span></div>
+      <div class="rule low-rule"><b>Low priority</b><span>Club promotions, newsletters, surveys, photos, and general announcements.</span></div>
+      <div class="danger-zone"><div><b>Delete my data</b><span>Permanently remove your Campus Inbox cache and disconnect Gmail. Your original Gmail messages are never deleted.</span></div><button id="deleteDataButton" type="button">Delete my data</button></div>
+      <button class="primary-action">Got it</button>
+    </form>
+  </dialog>
+
+  <dialog id="gmailDialog">
+    <form method="dialog">
+      <button class="dialog-close" aria-label="Close">×</button>
+      <span class="large-google">G</span>
+      <h2>Gmail connection comes next</h2>
+      <p>This safe demo uses sample messages. The production version will use Google OAuth, so your password is never entered or stored here.</p>
+      <div class="oauth-note"><span>✓</span><div><b>Safe connection</b><small>Read-only access, revocable from your Google Account.</small></div></div>
+      <button class="primary-action">Continue with demo</button>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

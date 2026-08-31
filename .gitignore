@@ -1,0 +1,15 @@
+node_modules/
+.npm-cache/
+.cache/
+.data/
+.env
+.env.*
+!.env.example
+.tokens.json
+*.db
+*.db-shm
+*.db-wal
+coverage/
+.DS_Store
+Thumbs.db
+npm-debug.log*
