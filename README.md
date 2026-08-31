@@ -47,7 +47,7 @@ The current dashboard loads up to 75 messages received during the last 30 days.
 
 Downloaded messages are classified once and cached in the local SQLite database `.data/campus-inbox.db`. Updates use a transaction so a failed write cannot leave a partially updated cache. Later refreshes reuse unchanged messages and call `messages.get` only for new message IDs. The database stores message ID, sender, subject, a 240-character preview, date, priority, and reason; it does not store the full email body. The `.data` directory is excluded from Git.
 
-During the ownership upgrade, old unscoped cache records are removed and safely rebuilt from Gmail under the connected user's private owner ID. A managed production database will replace the local SQLite file during deployment.
+During the ownership upgrade, old unscoped cache records are removed and safely rebuilt from Gmail under the connected user's private owner ID.
 
 Every cache row is scoped by a private owner ID derived from the connected Gmail address with a keyed HMAC. The database does not store the Gmail address itself. All reads, inserts, and deletions require the session's owner ID, and `(owner_id, message_id)` is the composite primary key. Set `DATA_OWNERSHIP_KEY` to a base64-encoded 32-byte random key.
 
@@ -66,6 +66,12 @@ The settings dialog includes a CSRF-protected **Delete my data** action. It dele
 ## Legal pages
 
 The dashboard links to `/privacy.html` and `/terms.html`. The privacy policy documents Gmail access, classification, storage, retention, deletion, sharing, security and Google API Limited Use compliance. Replace the temporary contact wording with a dedicated public support email before launch.
+
+## Production hosting
+
+The included Render Blueprint deploys the Node backend with a private persistent disk mounted at `/var/data`. The SQLite database stores both encrypted server-side sessions and the user-isolated email cache, so restarts do not sign everyone out or erase cached classifications.
+
+Set all six production secrets in the Render dashboard; never copy `.env` into Git. `GOOGLE_REDIRECT_URI` must use the final HTTPS hostname and end in `/auth/google/callback`. A persistent disk requires a paid Render web-service instance. Do not deploy this SQLite configuration to Vercel or to a free service with an ephemeral filesystem.
 
 ## Classification design
 

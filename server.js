@@ -16,7 +16,10 @@ const port = Number(process.env.PORT || 3000);
 const production = process.env.NODE_ENV === "production";
 const sessionCookieName = production ? "__Host-campus.sid" : "campus.sid";
 const redirectUri = process.env.GOOGLE_REDIRECT_URI || `http://localhost:${port}/auth/google/callback`;
-const databaseFile = path.join(__dirname, ".data", "campus-inbox.db");
+const dataDirectory = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, ".data");
+const databaseFile = path.join(dataDirectory, "campus-inbox.db");
 fs.mkdirSync(path.dirname(databaseFile), { recursive:true });
 const database = new DatabaseSync(databaseFile);
 database.exec("PRAGMA journal_mode = WAL");
@@ -56,6 +59,14 @@ function initializeOwnedCacheSchema() {
 }
 const removedUnscopedCount = initializeOwnedCacheSchema();
 database.exec("CREATE INDEX IF NOT EXISTS idx_email_cache_owner_received ON email_cache(owner_id, received_at DESC)");
+database.exec(`
+  CREATE TABLE IF NOT EXISTS user_sessions (
+    sid TEXT PRIMARY KEY,
+    session_json TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )
+`);
+database.exec("CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at)");
 database.exec("PRAGMA optimize");
 const configured = () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
@@ -149,6 +160,72 @@ function writeEmailCache(ownerId, cache) {
 }
 if (removedUnscopedCount) console.log(`Removed ${removedUnscopedCount} unscoped cache records during the privacy migration.`);
 
+class SQLiteSessionStore extends session.Store {
+  constructor(db) {
+    super();
+    this.db = db;
+    this.cleanupExpired();
+    this.cleanupTimer = setInterval(() => this.cleanupExpired(), 15 * 60 * 1000);
+    this.cleanupTimer.unref();
+  }
+
+  cleanupExpired() {
+    this.db.prepare("DELETE FROM user_sessions WHERE expires_at <= ?").run(Date.now());
+  }
+
+  get(sid, callback) {
+    try {
+      const row = this.db.prepare("SELECT session_json, expires_at FROM user_sessions WHERE sid = ?").get(sid);
+      if (!row || Number(row.expires_at) <= Date.now()) {
+        if (row) this.destroy(sid, () => {});
+        return callback(null, null);
+      }
+      callback(null, JSON.parse(row.session_json));
+    } catch (error) {
+      callback(error);
+    }
+  }
+
+  set(sid, value, callback = () => {}) {
+    try {
+      const expiresAt = value.cookie?.expires
+        ? new Date(value.cookie.expires).getTime()
+        : Date.now() + (value.cookie?.maxAge || 7 * 24 * 60 * 60 * 1000);
+      this.db.prepare(`
+        INSERT INTO user_sessions (sid, session_json, expires_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(sid) DO UPDATE SET session_json = excluded.session_json, expires_at = excluded.expires_at
+      `).run(sid, JSON.stringify(value), expiresAt);
+      callback(null);
+    } catch (error) {
+      callback(error);
+    }
+  }
+
+  destroy(sid, callback = () => {}) {
+    try {
+      this.db.prepare("DELETE FROM user_sessions WHERE sid = ?").run(sid);
+      callback(null);
+    } catch (error) {
+      callback(error);
+    }
+  }
+
+  touch(sid, value, callback = () => {}) {
+    try {
+      const expiresAt = value.cookie?.expires
+        ? new Date(value.cookie.expires).getTime()
+        : Date.now() + (value.cookie?.maxAge || 7 * 24 * 60 * 60 * 1000);
+      this.db.prepare("UPDATE user_sessions SET expires_at = ? WHERE sid = ?").run(expiresAt, sid);
+      callback(null);
+    } catch (error) {
+      callback(error);
+    }
+  }
+}
+
+const sessionStore = new SQLiteSessionStore(database);
+
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 app.use(helmet({
@@ -162,6 +239,7 @@ const gmailLimiter = rateLimit({ windowMs:60 * 1000, limit:30, standardHeaders:"
 const mutationLimiter = rateLimit({ windowMs:15 * 60 * 1000, limit:20, standardHeaders:"draft-8", legacyHeaders:false, message:{ error:"Too many account requests. Please wait and try again." } });
 app.use(session({
   name:sessionCookieName,
+  store:sessionStore,
   secret:process.env.SESSION_SECRET,
   resave:false,
   saveUninitialized:false,
@@ -173,6 +251,14 @@ app.use(session({
   }
 }));
 app.use(express.static(__dirname));
+app.get("/api/health", (_req, res) => {
+  try {
+    database.prepare("SELECT 1 AS healthy").get();
+    res.set("Cache-Control", "no-store").json({ status:"ok" });
+  } catch {
+    res.status(503).json({ status:"unavailable" });
+  }
+});
 function validCsrfToken(req) {
   const expected = req.session.csrfToken;
   const provided = req.get("x-csrf-token");
@@ -276,4 +362,4 @@ app.use((error, req, res, _next) => {
   if (req.path.startsWith("/api/")) return res.status(500).json({ error:"An unexpected server error occurred.", requestId });
   res.status(500).send(`<h1>Something went wrong</h1><p>Please try again. Reference: ${requestId}</p>`);
 });
-app.listen(port, "127.0.0.1", () => { console.log(`Campus Inbox running at http://localhost:${port}`); console.log(configured() ? "Google OAuth credentials detected." : "Add credentials to .env to connect Gmail."); console.log("User-isolated SQLite email cache ready."); });
+app.listen(port, production ? "0.0.0.0" : "127.0.0.1", () => { console.log(`Campus Inbox running on port ${port}`); console.log(configured() ? "Google OAuth credentials detected." : "Add credentials to .env to connect Gmail."); console.log("User-isolated SQLite cache and session store ready."); });
