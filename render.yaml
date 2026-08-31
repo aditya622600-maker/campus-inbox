@@ -3,6 +3,7 @@ services:
     name: campus-inbox
     runtime: node
     plan: free
+    region: singapore
     buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /api/health
