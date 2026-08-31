@@ -34,6 +34,10 @@ if (dataOwnershipKey.length !== 32) {
 function ownerIdForEmail(emailAddress) {
   return crypto.createHmac("sha256", dataOwnershipKey).update(emailAddress.trim().toLowerCase()).digest("hex");
 }
+function initialsForName(name) {
+  const initials = clean(name).split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toUpperCase();
+  return initials || "ST";
+}
 
 function encryptTokens(tokens) {
   const iv = crypto.randomBytes(12);
@@ -150,7 +154,7 @@ function destroySession(req, res, payload) {
 }
 app.get("/api/auth/status", (req, res) => {
   req.session.csrfToken ||= crypto.randomBytes(32).toString("base64url");
-  res.set("Cache-Control", "no-store").json({ configured:configured(), connected:Boolean(req.session.encryptedTokens && req.session.ownerId), csrfToken:req.session.csrfToken });
+  res.set("Cache-Control", "no-store").json({ configured:configured(), connected:Boolean(req.session.encryptedTokens && req.session.ownerId), profile:req.session.profile || null, csrfToken:req.session.csrfToken });
 });
 app.get("/auth/google", authLimiter, (req, res) => {
   try {
@@ -158,7 +162,7 @@ app.get("/auth/google", authLimiter, (req, res) => {
     req.session.oauthState = { value:state, expiresAt:Date.now() + 600000 };
     req.session.save(error => {
       if (error) return res.status(500).send("Could not start a secure sign-in session.");
-      res.redirect(oauthClient().generateAuthUrl({ access_type:"offline", prompt:"consent", scope:["https://www.googleapis.com/auth/gmail.readonly"], state }));
+      res.redirect(oauthClient().generateAuthUrl({ access_type:"offline", prompt:"consent", scope:["openid", "email", "profile", "https://www.googleapis.com/auth/gmail.readonly"], state }));
     });
   } catch (error) { console.error("OAuth setup failed:", error.message); res.status(500).send("<h1>Sign-in is temporarily unavailable</h1><p>Please try again later.</p>"); }
 });
@@ -171,13 +175,18 @@ app.get("/auth/google/callback", authLimiter, async (req, res) => {
     const { tokens } = await oauthClient().getToken(req.query.code);
     const profileClient = oauthClient();
     profileClient.setCredentials(tokens);
-    const profile = await google.gmail({ version:"v1", auth:profileClient }).users.getProfile({ userId:"me" });
-    if (!profile.data.emailAddress) throw new Error("Google did not return an account identity.");
-    const ownerId = ownerIdForEmail(profile.data.emailAddress);
+    const [gmailProfile, googleProfile] = await Promise.all([
+      google.gmail({ version:"v1", auth:profileClient }).users.getProfile({ userId:"me" }),
+      google.oauth2({ version:"v2", auth:profileClient }).userinfo.get(),
+    ]);
+    if (!gmailProfile.data.emailAddress) throw new Error("Google did not return an account identity.");
+    const ownerId = ownerIdForEmail(gmailProfile.data.emailAddress);
+    const displayName = clean(googleProfile.data.name || "Student");
     req.session.regenerate(error => {
       if (error) return res.redirect("/?auth_error=session_failed");
       req.session.encryptedTokens = encryptTokens(tokens);
       req.session.ownerId = ownerId;
+      req.session.profile = { name:displayName, initials:initialsForName(displayName) };
       req.session.save(saveError => res.redirect(saveError ? "/?auth_error=session_failed" : "/?connected=1"));
     });
   }

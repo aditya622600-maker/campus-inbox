@@ -181,6 +181,7 @@ function createSQLiteStorage(dataDirectory) {
     async deleteOwnerData(ownerId) {
       return Number(database.prepare("DELETE FROM email_cache WHERE owner_id = ?").run(ownerId).changes);
     },
+    async close() { database.close(); },
   };
 }
 
@@ -240,6 +241,7 @@ async function createPostgresStorage(connectionString) {
       const result = await pool.query("DELETE FROM email_cache WHERE owner_id = $1", [ownerId]);
       return result.rowCount;
     },
+    async close() { await pool.end(); },
   };
 }
 
