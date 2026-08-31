@@ -6,9 +6,8 @@ import { rateLimit } from "express-rate-limit";
 import { google } from "googleapis";
 import crypto from "node:crypto";
 import path from "node:path";
-import fs from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { createStorage } from "./storage.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -19,55 +18,7 @@ const redirectUri = process.env.GOOGLE_REDIRECT_URI || `http://localhost:${port}
 const dataDirectory = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : path.join(__dirname, ".data");
-const databaseFile = path.join(dataDirectory, "campus-inbox.db");
-fs.mkdirSync(path.dirname(databaseFile), { recursive:true });
-const database = new DatabaseSync(databaseFile);
-database.exec("PRAGMA journal_mode = WAL");
-database.exec("PRAGMA foreign_keys = ON");
-const createOwnedCacheTable = `
-  CREATE TABLE IF NOT EXISTS email_cache (
-    owner_id TEXT NOT NULL,
-    id TEXT NOT NULL,
-    sender TEXT NOT NULL,
-    subject TEXT NOT NULL,
-    preview TEXT NOT NULL,
-    received_at TEXT NOT NULL,
-    initials TEXT NOT NULL,
-    priority TEXT NOT NULL CHECK (priority IN ('critical', 'moderate', 'low')),
-    reason TEXT NOT NULL,
-    cached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (owner_id, id)
-  )
-`;
-function initializeOwnedCacheSchema() {
-  const columns = database.prepare("PRAGMA table_info(email_cache)").all();
-  if (columns.length && !columns.some(column => column.name === "owner_id")) {
-    const unscopedCount = Number(database.prepare("SELECT COUNT(*) AS count FROM email_cache").get().count);
-    database.exec("BEGIN IMMEDIATE");
-    try {
-      database.exec("DROP TABLE email_cache");
-      database.exec(createOwnedCacheTable);
-      database.exec("COMMIT");
-      return unscopedCount;
-    } catch (error) {
-      database.exec("ROLLBACK");
-      throw error;
-    }
-  }
-  database.exec(createOwnedCacheTable);
-  return 0;
-}
-const removedUnscopedCount = initializeOwnedCacheSchema();
-database.exec("CREATE INDEX IF NOT EXISTS idx_email_cache_owner_received ON email_cache(owner_id, received_at DESC)");
-database.exec(`
-  CREATE TABLE IF NOT EXISTS user_sessions (
-    sid TEXT PRIMARY KEY,
-    session_json TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )
-`);
-database.exec("CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at)");
-database.exec("PRAGMA optimize");
+const storage = await createStorage({ dataDirectory, databaseUrl:process.env.DATABASE_URL });
 const configured = () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
   throw new Error("SESSION_SECRET must be set to a random value of at least 32 characters.");
@@ -139,93 +90,6 @@ function classifyEmail(email, body) {
   const low = priorityRules.low.find(word => text.includes(word));
   return { priority:"low", reason:low ? `Filtered: ${low}` : "No urgent action detected" };
 }
-function readEmailCache(ownerId) {
-  const rows = database.prepare("SELECT id, sender, subject, preview, received_at, initials, priority, reason FROM email_cache WHERE owner_id = ?").all(ownerId);
-  return Object.fromEntries(rows.map(row => [row.id, { id:row.id, sender:row.sender, subject:row.subject, preview:row.preview, date:row.received_at, initials:row.initials, priority:row.priority, reason:row.reason }]));
-}
-function writeEmailCache(ownerId, cache) {
-  const insert = database.prepare(`
-    INSERT INTO email_cache (owner_id, id, sender, subject, preview, received_at, initials, priority, reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  database.exec("BEGIN IMMEDIATE");
-  try {
-    database.prepare("DELETE FROM email_cache WHERE owner_id = ?").run(ownerId);
-    for (const email of Object.values(cache)) insert.run(ownerId, email.id, email.sender, email.subject, email.preview, email.date, email.initials, email.priority, email.reason);
-    database.exec("COMMIT");
-  } catch (error) {
-    database.exec("ROLLBACK");
-    throw error;
-  }
-}
-if (removedUnscopedCount) console.log(`Removed ${removedUnscopedCount} unscoped cache records during the privacy migration.`);
-
-class SQLiteSessionStore extends session.Store {
-  constructor(db) {
-    super();
-    this.db = db;
-    this.cleanupExpired();
-    this.cleanupTimer = setInterval(() => this.cleanupExpired(), 15 * 60 * 1000);
-    this.cleanupTimer.unref();
-  }
-
-  cleanupExpired() {
-    this.db.prepare("DELETE FROM user_sessions WHERE expires_at <= ?").run(Date.now());
-  }
-
-  get(sid, callback) {
-    try {
-      const row = this.db.prepare("SELECT session_json, expires_at FROM user_sessions WHERE sid = ?").get(sid);
-      if (!row || Number(row.expires_at) <= Date.now()) {
-        if (row) this.destroy(sid, () => {});
-        return callback(null, null);
-      }
-      callback(null, JSON.parse(row.session_json));
-    } catch (error) {
-      callback(error);
-    }
-  }
-
-  set(sid, value, callback = () => {}) {
-    try {
-      const expiresAt = value.cookie?.expires
-        ? new Date(value.cookie.expires).getTime()
-        : Date.now() + (value.cookie?.maxAge || 7 * 24 * 60 * 60 * 1000);
-      this.db.prepare(`
-        INSERT INTO user_sessions (sid, session_json, expires_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(sid) DO UPDATE SET session_json = excluded.session_json, expires_at = excluded.expires_at
-      `).run(sid, JSON.stringify(value), expiresAt);
-      callback(null);
-    } catch (error) {
-      callback(error);
-    }
-  }
-
-  destroy(sid, callback = () => {}) {
-    try {
-      this.db.prepare("DELETE FROM user_sessions WHERE sid = ?").run(sid);
-      callback(null);
-    } catch (error) {
-      callback(error);
-    }
-  }
-
-  touch(sid, value, callback = () => {}) {
-    try {
-      const expiresAt = value.cookie?.expires
-        ? new Date(value.cookie.expires).getTime()
-        : Date.now() + (value.cookie?.maxAge || 7 * 24 * 60 * 60 * 1000);
-      this.db.prepare("UPDATE user_sessions SET expires_at = ? WHERE sid = ?").run(expiresAt, sid);
-      callback(null);
-    } catch (error) {
-      callback(error);
-    }
-  }
-}
-
-const sessionStore = new SQLiteSessionStore(database);
-
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 app.use(helmet({
@@ -239,7 +103,7 @@ const gmailLimiter = rateLimit({ windowMs:60 * 1000, limit:30, standardHeaders:"
 const mutationLimiter = rateLimit({ windowMs:15 * 60 * 1000, limit:20, standardHeaders:"draft-8", legacyHeaders:false, message:{ error:"Too many account requests. Please wait and try again." } });
 app.use(session({
   name:sessionCookieName,
-  store:sessionStore,
+  store:storage.sessionStore,
   secret:process.env.SESSION_SECRET,
   resave:false,
   saveUninitialized:false,
@@ -251,9 +115,9 @@ app.use(session({
   }
 }));
 app.use(express.static(__dirname));
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", async (_req, res) => {
   try {
-    database.prepare("SELECT 1 AS healthy").get();
+    await storage.health();
     res.set("Cache-Control", "no-store").json({ status:"ok" });
   } catch {
     res.status(503).json({ status:"unavailable" });
@@ -325,7 +189,7 @@ app.get("/api/emails", gmailLimiter, async (req, res) => {
     const gmail = google.gmail({ version:"v1", auth:oauthClient(req.session) });
     const list = await gmail.users.messages.list({ userId:"me", maxResults:75, q:"newer_than:30d" });
     const messageRefs = list.data.messages || [];
-    const cache = readEmailCache(req.session.ownerId);
+    const cache = await storage.readEmailCache(req.session.ownerId);
     const missing = messageRefs.filter(({id}) => !cache[id]);
     const details = await Promise.all(missing.map(({id}) => gmail.users.messages.get({ userId:"me", id, format:"full" })));
     details.forEach(({data}) => {
@@ -337,7 +201,7 @@ app.get("/api/emails", gmailLimiter, async (req, res) => {
     });
     const activeIds = new Set(messageRefs.map(({id}) => id));
     const trimmedCache = Object.fromEntries(Object.entries(cache).filter(([id]) => activeIds.has(id)));
-    writeEmailCache(req.session.ownerId, trimmedCache);
+    await storage.writeEmailCache(req.session.ownerId, trimmedCache);
     const emails = messageRefs.map(({id}) => trimmedCache[id]).filter(Boolean);
     res.set("Cache-Control", "no-store").json({ emails, cache:{ reused:emails.length-missing.length, downloaded:missing.length } });
   } catch (error) { console.error("Gmail fetch failed:", error.message); if (error.code === 401) delete req.session.encryptedTokens; res.status(error.code === 401 ? 401 : 500).json({ error:"Could not load Gmail messages." }); }
@@ -350,7 +214,7 @@ app.post("/api/auth/logout", mutationLimiter, async (req, res) => {
 app.delete("/api/account/data", mutationLimiter, async (req, res) => {
   if (!validCsrfToken(req)) return res.status(403).json({ error:"Invalid security token. Refresh the page and try again." });
   if (!req.session.ownerId) return res.status(401).json({ error:"Connect Gmail before deleting account data." });
-  const deletedRecords = Number(database.prepare("DELETE FROM email_cache WHERE owner_id = ?").run(req.session.ownerId).changes);
+  const deletedRecords = await storage.deleteOwnerData(req.session.ownerId);
   const revoked = await revokeGoogleAccess(req.session);
   destroySession(req, res, { deleted:true, deletedRecords, connected:false, revoked, warning:revoked ? null : "Your cached data was deleted and local session ended, but Google access could not be revoked. Remove Campus Inbox from your Google Account permissions." });
 });
@@ -362,4 +226,4 @@ app.use((error, req, res, _next) => {
   if (req.path.startsWith("/api/")) return res.status(500).json({ error:"An unexpected server error occurred.", requestId });
   res.status(500).send(`<h1>Something went wrong</h1><p>Please try again. Reference: ${requestId}</p>`);
 });
-app.listen(port, production ? "0.0.0.0" : "127.0.0.1", () => { console.log(`Campus Inbox running on port ${port}`); console.log(configured() ? "Google OAuth credentials detected." : "Add credentials to .env to connect Gmail."); console.log("User-isolated SQLite cache and session store ready."); });
+app.listen(port, production ? "0.0.0.0" : "127.0.0.1", () => { console.log(`Campus Inbox running on port ${port}`); console.log(configured() ? "Google OAuth credentials detected." : "Add credentials to .env to connect Gmail."); console.log(`User-isolated ${storage.kind} cache and session store ready.`); });

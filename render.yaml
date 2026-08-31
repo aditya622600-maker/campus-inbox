@@ -2,20 +2,16 @@ services:
   - type: web
     name: campus-inbox
     runtime: node
-    plan: 0.5c-512mb
+    plan: free
     buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeployTrigger: commit
-    disk:
-      name: campus-inbox-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DATA_DIR
-        value: /var/data
+      - key: DATABASE_URL
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
@@ -23,8 +19,8 @@ services:
       - key: GOOGLE_REDIRECT_URI
         sync: false
       - key: SESSION_SECRET
-        sync: false
+        generateValue: true
       - key: TOKEN_ENCRYPTION_KEY
-        sync: false
+        generateValue: true
       - key: DATA_OWNERSHIP_KEY
-        sync: false
+        generateValue: true
