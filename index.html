@@ -88,6 +88,21 @@
     </form>
   </dialog>
 
+  <dialog id="emailDialog" class="email-dialog">
+    <form method="dialog">
+      <button class="dialog-close" aria-label="Close email details">×</button>
+      <div class="email-detail-heading">
+        <span class="sender-avatar" id="detailInitials">?</span>
+        <div><p class="eyebrow" id="detailPriority">EMAIL DETAILS</p><h2 id="detailSubject">Message</h2></div>
+      </div>
+      <div class="email-detail-meta"><span><b>From</b><span id="detailSender"></span></span><span><b>Received</b><time id="detailDate"></time></span></div>
+      <section class="email-detail-preview"><h3>Message preview</h3><p id="detailPreview"></p></section>
+      <div class="email-detail-reason"><b>Why this priority?</b><span id="detailReason"></span></div>
+      <a class="primary-action gmail-link" id="openGmailLink" href="#" target="_blank" rel="noopener noreferrer">Open in Gmail ↗</a>
+      <p class="gmail-link-note" id="gmailLinkNote" hidden>Connect Gmail to open the original message.</p>
+    </form>
+  </dialog>
+
   <script src="app.js"></script>
 </body>
 </html>

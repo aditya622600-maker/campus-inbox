@@ -211,7 +211,7 @@ app.get("/api/emails", gmailLimiter, async (req, res) => {
     const activeIds = new Set(messageRefs.map(({id}) => id));
     const trimmedCache = Object.fromEntries(Object.entries(cache).filter(([id]) => activeIds.has(id)));
     await storage.writeEmailCache(req.session.ownerId, trimmedCache);
-    const emails = messageRefs.map(({id}) => trimmedCache[id]).filter(Boolean);
+    const emails = messageRefs.map(({id, threadId}) => trimmedCache[id] ? { ...trimmedCache[id], threadId } : null).filter(Boolean);
     res.set("Cache-Control", "no-store").json({ emails, cache:{ reused:emails.length-missing.length, downloaded:missing.length } });
   } catch (error) { console.error("Gmail fetch failed:", error.message); if (error.code === 401) delete req.session.encryptedTokens; res.status(error.code === 401 ? 401 : 500).json({ error:"Could not load Gmail messages." }); }
 });
